@@ -1,22 +1,27 @@
-#include <CoreFoundation/CoreFoundation.h>
+#include <ApplicationServices/ApplicationServices.h>
+#include <dlfcn.h>
+#include <unistd.h>
 
-static void idle_source(void *info)
-{
-    (void)info;
-}
+typedef OSErr (*get_current_process_fn)(ProcessSerialNumber *);
 
 int main(void)
 {
-    CFRunLoopSourceContext context = {0};
-    context.perform = idle_source;
-
-    CFRunLoopSourceRef source = CFRunLoopSourceCreate(kCFAllocatorDefault, 0,
-                                                    &context);
-    if (source == NULL)
+    void *framework = dlopen(
+        "/System/Library/Frameworks/ApplicationServices.framework/"
+        "Versions/A/Frameworks/HIServices.framework/Versions/A/HIServices",
+        RTLD_NOW | RTLD_LOCAL);
+    if (framework == NULL)
         return 1;
 
-    CFRunLoopAddSource(CFRunLoopGetMain(), source, kCFRunLoopDefaultMode);
-    CFRelease(source);
-    CFRunLoopRun();
-    return 0;
+    get_current_process_fn check_in =
+        (get_current_process_fn)dlsym(framework, "GetCurrentProcess");
+    ProcessSerialNumber psn;
+    if (check_in == NULL || check_in(&psn) != noErr) {
+        dlclose(framework);
+        return 1;
+    }
+
+    dlclose(framework);
+    for (;;)
+        pause();
 }

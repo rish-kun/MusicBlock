@@ -58,14 +58,14 @@ pgrep -fl '/System/Applications/Music.app/Contents/MacOS/Music'
 ## Result on this Mac
 
 Tested on 2026-09-29, macOS 27.0 (26A428), Apple Silicon (`arm64`). The build,
-Launch Services launch, and memory checks passed. The Play-control behavior
-check is pending a physical Play press; overall success is therefore **not yet
-established**.
+Launch Services launch, memory check, and Play-control baseline passed. The
+three-press blocker check **failed**: Music opened while MusicBlock was
+running. Overall result: **failed**.
 
 Commands run:
 
 ```sh
-sh build.sh
+./build.sh
 plutil -lint build/MusicBlock.app/Contents/Info.plist
 codesign --verify --verbose=2 build/MusicBlock.app
 file build/MusicBlock.app/Contents/MacOS/MusicBlock
@@ -78,6 +78,12 @@ footprint 46446
 vmmap -summary 46446
 top -l 1 -pid 46446 -stats pid,threads,cpu,mem
 kill 46446
+# With MusicBlock stopped, press the physical Play control once.
+open "$PWD/build/MusicBlock.app"
+pgrep -fl '/MusicBlock.app/Contents/MacOS/MusicBlock'
+lsappinfo list | rg -i 'musicblock|MusicBlock.app'
+# With Music closed, press the same physical Play control three times.
+kill 53105
 ```
 
 Observed: the bundle launched as PID 46446 and remained alive; the plist and
@@ -86,4 +92,11 @@ listed only `/usr/lib/libSystem.B.dylib`. After idle, `footprint` and `vmmap`
 reported **1,152 KB physical footprint** (peak 1,184 KB), below the 2 MB cap.
 `ps` reported **1,600 KB RSS** and **0.0% CPU**; `top` reported **one thread**,
 0.0% CPU, and 1,152 KB memory. MusicBlock was then stopped for the baseline
-behavior test.
+behavior test. With MusicBlock stopped and Music initially closed, pressing the
+physical Play control opened Music. After Music was closed, MusicBlock was
+launched again as PID 53105; `lsappinfo list` showed the MusicBlock bundle
+registered with Launch Services. The user pressed the same Play control three
+times and observed the system Music app open. MusicBlock was still running
+when checked afterward; Music had already been closed before the process
+check. MusicBlock was then stopped. This macOS version did not treat the bare
+C background bundle as a sufficient blocker in this test.

@@ -1,27 +1,27 @@
 # MusicBlock
 
-MusicBlock is a manually launched, background-only macOS app built in C. It
+MusicBlock is a background-only macOS app built in C. It
 checks in with the Process Manager under the bundle ID `com.apple.Music`, then
 sleeps on `pause()`. On the tested Mac, pressing Play while it runs does not
 leave the system Music app open. The Music icon still bounces briefly in the
-Dock. It does not redirect media controls or start at login.
+Dock. It does not redirect media controls. On the tested Mac, the installed
+copy is registered to open at login.
 
 The check-in uses `GetCurrentProcess()`. Apple's SDK describes this as forcing
 Process Manager check-in, but marks the API deprecated since macOS 10.9. This
 is an observed workaround on macOS 27, not a documented `rcd` contract.
 
-## Build and run
+## Build
 
 On an Apple Silicon Mac with Xcode or Command Line Tools:
 
 ```sh
 ./build.sh
-open "$PWD/build/MusicBlock.app"
 ```
 
-Launch by **bundle path**. `open -b com.apple.Music` is ambiguous because the
-system Music app has the same bundle ID. The deprecation warning during build
-is expected. To find and stop MusicBlock:
+The deprecation warning during build is expected. Launch by **bundle path**;
+`open -b com.apple.Music` is ambiguous because the system Music app has the
+same bundle ID. To find and stop MusicBlock:
 
 ```sh
 pgrep -fl '/MusicBlock.app/Contents/MacOS/MusicBlock'
@@ -29,9 +29,27 @@ musicblock_pid=$(pgrep -x MusicBlock | head -n 1)
 kill "$musicblock_pid"
 ```
 
-Quit the running build before rebuilding. While MusicBlock runs, sharing
+Quit the running app before replacing its bundle. While MusicBlock runs, sharing
 Music's bundle ID may interfere with intentionally opening or scripting Music.
 Quit MusicBlock when you want to use Music normally.
+
+## Installed copy on this Mac
+
+The signed bundle is installed at `~/Applications/MusicBlock.app`. System
+Settings → General → Login Items & Extensions lists **MusicBlock.app** under
+**Open at Login**. `sfltool dumpbtm` reports this entry enabled and points to
+the installed path. The source build alone does not register a login item.
+
+To update the installed copy after changing the source, quit MusicBlock, then:
+
+```sh
+./build.sh
+ditto build/MusicBlock.app "$HOME/Applications/MusicBlock.app"
+codesign --verify --verbose=2 "$HOME/Applications/MusicBlock.app"
+open "$HOME/Applications/MusicBlock.app"
+```
+
+The login item keeps referring to the same installed path.
 
 ## Verify on another Mac
 

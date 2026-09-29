@@ -25,7 +25,7 @@ is expected. To find and stop MusicBlock:
 
 ```sh
 pgrep -fl '/MusicBlock.app/Contents/MacOS/MusicBlock'
-musicblock_pid=$(pgrep -f '/MusicBlock.app/Contents/MacOS/MusicBlock' | head -n 1)
+musicblock_pid=$(pgrep -x MusicBlock | head -n 1)
 kill "$musicblock_pid"
 ```
 
@@ -47,7 +47,7 @@ plutil -lint build/MusicBlock.app/Contents/Info.plist
 codesign --verify --verbose=2 build/MusicBlock.app
 file build/MusicBlock.app/Contents/MacOS/MusicBlock
 otool -L build/MusicBlock.app/Contents/MacOS/MusicBlock
-musicblock_pid=$(pgrep -f '/MusicBlock.app/Contents/MacOS/MusicBlock' | head -n 1)
+musicblock_pid=$(pgrep -x MusicBlock | head -n 1)
 ps -o pid,rss,%cpu,comm -p "$musicblock_pid"
 footprint "$musicblock_pid"
 vmmap -summary "$musicblock_pid"
@@ -64,17 +64,18 @@ because the process may grow when macOS routes the event.
 Tested 2026-09-29 on Apple Silicon, macOS 27.0 (26A428). The baseline Play
 press opened Music with MusicBlock stopped. Each running variant was opened
 through Launch Services by path; the user pressed the same Play control three
-times.
+times. Footprints were recorded after at least 30 seconds idle unless marked
+"after Play."
 
-| Variant | Commit | Play result | Physical footprint after 30 s idle |
+| Variant | Commit | Play result | Physical footprint |
 | --- | --- | --- | ---: |
 | C, `pause()` only, `LSBackgroundOnly` | `8a9b8dd` | Music stayed open | 1,152 KB |
-| AppKit `NSApplicationMain` | `2c9791d` | Music closed; Dock bounce | 7,969 KB |
+| AppKit `NSApplicationMain` | `2c9791d` | Music stayed closed; Dock bounce | 7,969 KB idle |
 | C, `pause()` only, `LSUIElement` | `1e2c2e8` | Music stayed open | Not measured |
-| C, `GetCurrentProcess()`, ApplicationServices | `396bb3e` | Music closed; Dock bounce | 4,433 KB |
-| Same call, direct HIServices link | `aee2429` | Music closed; Dock bounce | 4,385 KB |
+| C, `GetCurrentProcess()`, ApplicationServices | `396bb3e` | Music stayed closed; Dock bounce | 4,433 KB idle |
+| Same call, direct HIServices link | `aee2429` | Music stayed closed; Dock bounce | 4,385 KB idle |
 | C, CoreFoundation run loop | `87a7e89` | Music stayed open | 1,680 KB |
-| C, dynamic HIServices load then unload | `c390503` | Music closed; Dock bounce | 2,321 KB before Play; 4,417 KB after Play |
+| C, dynamic HIServices load then unload | `c390503` | Music stayed closed; Dock bounce | 2,321 KB before Play; 4,417 KB after Play |
 | C, `TransformProcessType()` only | `5ee0725` | Exited with status 1 | Not measured |
 
 The current build uses the ApplicationServices `GetCurrentProcess()` variant.

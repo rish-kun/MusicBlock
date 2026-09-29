@@ -3,9 +3,8 @@
 
 int main(void)
 {
-    ProcessSerialNumber psn = {0, kCurrentProcess};
-    if (TransformProcessType(&psn,
-                             kProcessTransformToBackgroundApplication) != noErr)
+    ProcessSerialNumber psn;
+    if (GetCurrentProcess(&psn) != noErr)
         return 1;
 
     for (;;)

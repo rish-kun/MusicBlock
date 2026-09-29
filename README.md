@@ -1,21 +1,27 @@
-# MusicBlock experiment
+# MusicBlock
 
-MusicBlock is a faceless macOS app that stays asleep under the bundle ID
-`com.apple.Music`. It tests whether a C process with `LSBackgroundOnly` prevents
-the system Music app from opening when Play is pressed. It does not redirect
-media controls or start at login.
+MusicBlock is a manually launched, background-only macOS app built in C. It
+checks in with the Process Manager under the bundle ID `com.apple.Music`, then
+sleeps on `pause()`. On the tested Mac, pressing Play while it runs does not
+leave the system Music app open. The Music icon still bounces briefly in the
+Dock. It does not redirect media controls or start at login.
+
+The check-in uses `GetCurrentProcess()`. Apple's SDK describes this as forcing
+Process Manager check-in, but marks the API deprecated since macOS 10.9. This
+is an observed workaround on macOS 27, not a documented `rcd` contract.
 
 ## Build and run
 
-On an Apple Silicon Mac with Command Line Tools installed:
+On an Apple Silicon Mac with Xcode or Command Line Tools:
 
 ```sh
-sh build.sh
-open "$(pwd)/build/MusicBlock.app"
+./build.sh
+open "$PWD/build/MusicBlock.app"
 ```
 
-Launch the bundle by **path**, not with `open -b com.apple.Music`, because the
-system Music app has the same bundle ID. To find and quit this build:
+Launch by **bundle path**. `open -b com.apple.Music` is ambiguous because the
+system Music app has the same bundle ID. The deprecation warning during build
+is expected. To find and stop MusicBlock:
 
 ```sh
 pgrep -fl '/MusicBlock.app/Contents/MacOS/MusicBlock'
@@ -23,24 +29,18 @@ musicblock_pid=$(pgrep -f '/MusicBlock.app/Contents/MacOS/MusicBlock' | head -n 
 kill "$musicblock_pid"
 ```
 
-After an edit, quit the running build, run `sh build.sh`, then open the bundle
-again. There is no login item, installer, or fallback implementation.
+Quit the running build before rebuilding. While MusicBlock runs, sharing
+Music's bundle ID may interfere with intentionally opening or scripting Music.
+Quit MusicBlock when you want to use Music normally.
 
-Sharing Music's bundle ID may interfere with intentionally opening or scripting
-Music while MusicBlock runs. Quit MusicBlock to restore the normal behavior.
+## Verify on another Mac
 
-## Verification procedure
-
-1. With MusicBlock stopped, quit Music and stop other players. Press the Play
-   control that normally triggers Music. Confirm Music opens; otherwise the
-   behavior experiment is inconclusive.
-2. Quit Music, launch MusicBlock through `open` by path, and find its PID.
-   Confirm the process remains alive. Press the same Play control three times.
-   The behavior check passes only if the system Music process stays closed.
-3. After MusicBlock has been idle for at least 30 seconds, run the following
-   commands. The memory check passes only if the **physical
-   footprint** reported by `footprint` is at most 2 MB. RSS is recorded
-   separately and is not the pass criterion.
+1. With MusicBlock stopped, close Music and other players. Press Play once to
+   confirm that this control opens Music on that Mac. Close Music again.
+2. Build and open MusicBlock by path. Confirm its process stays alive. Press
+   the same Play control three times and check whether Music stays open,
+   briefly bounces in the Dock, or remains absent.
+3. After at least 30 seconds idle, run:
 
 ```sh
 plutil -lint build/MusicBlock.app/Contents/Info.plist
@@ -52,51 +52,42 @@ ps -o pid,rss,%cpu,comm -p "$musicblock_pid"
 footprint "$musicblock_pid"
 vmmap -summary "$musicblock_pid"
 top -l 1 -pid "$musicblock_pid" -stats pid,threads,cpu,mem
-pgrep -fl '/System/Applications/Music.app/Contents/MacOS/Music'
+pgrep -x Music || true
 ```
 
-## Result on this Mac
+`footprint` physical footprint is the memory metric used here; RSS includes
+shared resident pages and is reported separately. Measure again after Play,
+because the process may grow when macOS routes the event.
 
-Tested on 2026-09-29, macOS 27.0 (26A428), Apple Silicon (`arm64`). The build,
-Launch Services launch, memory check, and Play-control baseline passed. The
-three-press blocker check **failed**: Music opened while MusicBlock was
-running. Overall result: **failed**.
+## Results on this Mac
 
-Commands run:
+Tested 2026-09-29 on Apple Silicon, macOS 27.0 (26A428). The baseline Play
+press opened Music with MusicBlock stopped. Each running variant was opened
+through Launch Services by path; the user pressed the same Play control three
+times.
 
-```sh
-./build.sh
-plutil -lint build/MusicBlock.app/Contents/Info.plist
-codesign --verify --verbose=2 build/MusicBlock.app
-file build/MusicBlock.app/Contents/MacOS/MusicBlock
-otool -L build/MusicBlock.app/Contents/MacOS/MusicBlock
-open "$PWD/build/MusicBlock.app"
-pgrep -fl '/MusicBlock.app/Contents/MacOS/MusicBlock'
-# After more than 30 seconds idle, using the observed PID:
-ps -o pid,rss,%cpu,comm -p 46446
-footprint 46446
-vmmap -summary 46446
-top -l 1 -pid 46446 -stats pid,threads,cpu,mem
-kill 46446
-# With MusicBlock stopped, press the physical Play control once.
-open "$PWD/build/MusicBlock.app"
-pgrep -fl '/MusicBlock.app/Contents/MacOS/MusicBlock'
-lsappinfo list | rg -i 'musicblock|MusicBlock.app'
-# With Music closed, press the same physical Play control three times.
-kill 53105
-```
+| Variant | Commit | Play result | Physical footprint after 30 s idle |
+| --- | --- | --- | ---: |
+| C, `pause()` only, `LSBackgroundOnly` | `8a9b8dd` | Music stayed open | 1,152 KB |
+| AppKit `NSApplicationMain` | `2c9791d` | Music closed; Dock bounce | 7,969 KB |
+| C, `pause()` only, `LSUIElement` | `1e2c2e8` | Music stayed open | Not measured |
+| C, `GetCurrentProcess()`, ApplicationServices | `396bb3e` | Music closed; Dock bounce | 4,433 KB |
+| Same call, direct HIServices link | `aee2429` | Music closed; Dock bounce | 4,385 KB |
+| C, CoreFoundation run loop | `87a7e89` | Music stayed open | 1,680 KB |
+| C, dynamic HIServices load then unload | `c390503` | Music closed; Dock bounce | 2,321 KB before Play; 4,417 KB after Play |
+| C, `TransformProcessType()` only | `5ee0725` | Exited with status 1 | Not measured |
 
-Observed: the bundle launched as PID 46446 and remained alive; the plist and
-signature validated, `file` reported a thin `arm64` Mach-O, and `otool -L`
-listed only `/usr/lib/libSystem.B.dylib`. After idle, `footprint` and `vmmap`
-reported **1,152 KB physical footprint** (peak 1,184 KB), below the 2 MB cap.
-`ps` reported **1,600 KB RSS** and **0.0% CPU**; `top` reported **one thread**,
-0.0% CPU, and 1,152 KB memory. MusicBlock was then stopped for the baseline
-behavior test. With MusicBlock stopped and Music initially closed, pressing the
-physical Play control opened Music. After Music was closed, MusicBlock was
-launched again as PID 53105; `lsappinfo list` showed the MusicBlock bundle
-registered with Launch Services. The user pressed the same Play control three
-times and observed the system Music app open. MusicBlock was still running
-when checked afterward; Music had already been closed before the process
-check. MusicBlock was then stopped. This macOS version did not treat the bare
-C background bundle as a sufficient blocker in this test.
+The current build uses the ApplicationServices `GetCurrentProcess()` variant.
+Its plist and ad-hoc signature validate, `file` reports a thin `arm64` Mach-O,
+and `otool -L` lists ApplicationServices and libSystem. The measured idle CPU
+was 0.0%. The strict original target of **Music never attempting to open and
+physical footprint ≤2 MB** was not met. The practical result is that Music
+does not remain open, at about **4.4 MB** physical footprint with a brief Dock
+bounce. The dynamic-load variant's lower initial footprint did not persist
+after Play.
+
+Music Decoy's author describes the `rcd` bundle-ID behavior in its
+[README](https://github.com/FuzzyIdeas/MusicDecoy). The
+[AntiMusic comparison](https://nift4.org/2023/12/09/antimusic/) also reports a
+Dock bounce with Music Decoy. Neither source is an Apple guarantee for future
+macOS releases.
